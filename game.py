@@ -24,6 +24,8 @@
     6. 自动重新开始新一局
 """
 
+from typing import Tuple
+
 import pygame
 from pygame.locals import (
     K_1,
