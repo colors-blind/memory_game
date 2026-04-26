@@ -56,10 +56,11 @@ def initialize_font() -> pygame.font.Font:
     """
     初始化 Pygame 字体系统，获取支持中文的字体。
     
-    此函数会尝试多种方式获取字体：
-    1. 首先尝试使用系统默认字体
-    2. 如果默认字体不支持中文，尝试使用 Pygame 自带的字体
-    3. 最后尝试常见的中文字体名称
+    此函数会尝试多种方式获取支持中文的字体：
+    1. 首先列出系统中所有可用的字体
+    2. 尝试常见的中文字体名称
+    3. 使用字体文件名进行尝试
+    4. 最后使用默认字体作为备选
     
     返回:
         初始化后的字体对象
@@ -73,41 +74,191 @@ def initialize_font() -> pygame.font.Font:
     if _font is not None:
         return _font
     
-    # 尝试获取系统字体
-    # 注意：pygame.font.get_default_font() 返回的字体可能不支持中文
-    try:
-        # 尝试使用常见的中文字体
-        font_names = [
-            "Microsoft YaHei",      # Windows
-            "SimHei",                # Windows 黑体
-            "SimSun",                # Windows 宋体
-            "PingFang SC",           # macOS
-            "Heiti SC",              # macOS
-            "STHeiti",               # macOS
-            "WenQuanYi Micro Hei",   # Linux
-            "Noto Sans CJK SC",      # Linux
-            "Droid Sans Fallback",   # Android/Linux
+    # 确保 Pygame 字体模块已初始化
+    if not pygame.font.get_init():
+        pygame.font.init()
+    
+    # 获取系统中所有可用的字体名称（用于调试）
+    available_fonts = pygame.font.get_fonts()
+    print(f"系统可用字体数量: {len(available_fonts)}")
+    
+    # 按优先级排序的中文字体名称列表
+    # 包含不同操作系统和不同地区的常见中文字体
+    chinese_font_names = [
+        # Linux 系统常见中文字体
+        "wenquanyimicrohei",      # 文泉驿微米黑
+        "wenquanyi zen hei",       # 文泉驿正黑
+        "notosanscjksc",           # Noto Sans CJK SC
+        "notosanscjktc",           # Noto Sans CJK TC
+        "notosanscjkjp",           # Noto Sans CJK JP
+        "notoserifcjksc",          # Noto Serif CJK SC
+        "droidsansfallback",       # Droid Sans Fallback
+        "ukai",                    # UKai
+        "uming",                   # Uming
+        "arplumingtw",             # AR PL UMing TW
+        "arplumingcn",             # AR PL UMing CN
+        "arplukaitw",              # AR PL UKai TW
+        "arplukaicn",              # AR PL UKai CN
+        
+        # Windows 系统常见中文字体
+        "microsoftyahei",          # 微软雅黑
+        "microsoftjhenghei",       # 微软正黑体
+        "simhei",                  # 黑体
+        "simsun",                  # 宋体
+        "simkai",                  # 楷体
+        "simli",                   # 隶书
+        "simsunb",                 # 宋体-ExtB
+        "nsimsun",                 # 新宋体
+        "fangsong",                # 仿宋
+        "youyuan",                 # 幼圆
+        
+        # macOS 系统常见中文字体
+        "pingfangsc",              # 苹方-简
+        "pingfangtc",              # 苹方-繁
+        "pingfanghk",              # 苹方-港
+        "heitisc",                 # 黑体-简
+        "heititc",                 # 黑体-繁
+        "stheitisc",               # 华文黑体-简
+        "stheititc",               # 华文黑体-繁
+        "stsong",                  # 华文宋体
+        "stkaiti",                 # 华文楷体
+        "stfangsong",              # 华文仿宋
+        "applemyungjo",            # AppleMyungjo
+        
+        # 其他常见中文字体
+        "wqy-microhei",            # 文泉驿微米黑（另一种命名方式）
+        "wqy-zenhei",              # 文泉驿正黑（另一种命名方式）
+        "sourcehansanscn",         # 思源黑体
+        "sourcehanserifcn",        # 思源宋体
+    ]
+    
+    # 打印系统中包含 "chinese"、"cjk"、"hei"、"song" 等关键字的字体
+    # 帮助用户了解系统中有哪些中文字体
+    print("检测到的可能支持中文的字体:")
+    for font_name in available_fonts:
+        lower_name = font_name.lower()
+        # 检查字体名称是否包含中文相关的关键字
+        chinese_keywords = [
+            "chinese", "cjk", "sc", "tc", "cn", "tw", "hk",
+            "hei", "song", "kai", "fang", "ming", "yuan",
+            "yahei", "jheng", "ping", "st", "arpl", "wqy",
+            "noto", "droid", "ukai", "uming", "sourcehan",
+            "wenquanyi", "micro", "zen",
         ]
-        
-        for font_name in font_names:
-            try:
-                _font = pygame.font.SysFont(font_name, FONT_SIZE)
-                # 测试是否能渲染中文
-                test_surface = _font.render("测试", True, (255, 255, 255))
-                if test_surface.get_width() > 0:
+        for keyword in chinese_keywords:
+            if keyword in lower_name:
+                print(f"  - {font_name}")
+                break
+    
+    # 尝试使用 SysFont 加载中文字体
+    print("正在尝试加载中文字体...")
+    
+    # 方法1: 使用 match_font 查找字体文件路径
+    # 这是更可靠的方法，可以直接找到字体文件的完整路径
+    for font_name in chinese_font_names:
+        try:
+            # 使用 match_font 查找字体文件路径
+            # bold=False, italic=False
+            font_path = pygame.font.match_font(font_name, bold=False, italic=False)
+            
+            if font_path:
+                print(f"找到字体文件: {font_path}")
+                
+                # 直接使用字体文件路径创建字体对象
+                _font = pygame.font.Font(font_path, FONT_SIZE)
+                
+                # 测试字体是否支持中文
+                test_text = "中文测试"
+                metrics = _font.metrics(test_text)
+                
+                if metrics and all(m is not None for m in metrics):
+                    print(f"成功加载字体: {font_name} (路径: {font_path})")
                     return _font
-            except Exception:
-                continue
+                    
+        except Exception as e:
+            # 继续尝试下一个字体
+            continue
+    
+    # 方法2: 使用 SysFont 加载（备选方法）
+    for font_name in chinese_font_names:
+        try:
+            # 尝试使用 SysFont 加载字体
+            _font = pygame.font.SysFont(font_name, FONT_SIZE, bold=False, italic=False)
+            
+            # 测试字体是否支持中文
+            test_text = "中文测试"
+            metrics = _font.metrics(test_text)
+            
+            if metrics and all(m is not None for m in metrics):
+                print(f"成功加载字体: {font_name}")
+                return _font
+                
+        except Exception as e:
+            # 继续尝试下一个字体
+            continue
+    
+    # 方法3: 尝试使用常见的字体文件名直接查找
+    # 有些字体可能不在系统字体列表中，但在特定路径下
+    common_font_files = [
+        # Linux 常见字体路径
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",
         
-        # 如果所有中文字体都失败，使用默认字体
-        _font = pygame.font.Font(None, FONT_SIZE)
-        return _font
+        # 通用字体名称（让 Pygame 自己查找）
+        "wqy-microhei",
+        "wqy-zenhei",
+        "NotoSansCJKsc",
+        "DroidSansFallback",
+    ]
+    
+    print("尝试直接加载常见中文字体文件...")
+    for font_path in common_font_files:
+        try:
+            # 尝试直接加载字体文件
+            _font = pygame.font.Font(font_path, FONT_SIZE)
+            
+            # 测试字体是否支持中文
+            test_text = "中文测试"
+            metrics = _font.metrics(test_text)
+            
+            if metrics and all(m is not None for m in metrics):
+                print(f"成功加载字体文件: {font_path}")
+                return _font
+                
+        except Exception as e:
+            # 继续尝试下一个字体
+            continue
+    
+    # 如果使用名称找不到字体，尝试使用默认字体
+    print("警告：未找到支持中文的系统字体，尝试使用默认字体...")
+    
+    # 尝试使用 pygame.font.get_default_font()
+    try:
+        default_font_name = pygame.font.get_default_font()
+        print(f"Pygame 默认字体: {default_font_name}")
         
-    except Exception as e:
-        # 最后的备选方案
-        print(f"警告：字体初始化失败，使用默认字体: {e}")
-        _font = pygame.font.Font(None, FONT_SIZE)
+        # 尝试使用默认字体名称加载
+        _font = pygame.font.SysFont(default_font_name, FONT_SIZE)
         return _font
+    except Exception:
+        pass
+    
+    # 最后的备选方案：使用 None 作为字体名称
+    # 这会让 Pygame 使用内置的默认字体
+    print("使用 Pygame 内置默认字体（可能不支持中文）")
+    print("提示：如果中文显示为方块，请安装中文字体")
+    print("常见 Linux 中文字体包：")
+    print("  - Ubuntu/Debian: sudo apt install fonts-wqy-microhei fonts-noto-cjk")
+    print("  - Fedora/RHEL: sudo dnf install wqy-microhei-fonts google-noto-sans-cjk-sc-fonts")
+    print("  - Arch: sudo pacman -S wqy-microhei noto-fonts-cjk")
+    
+    _font = pygame.font.Font(None, FONT_SIZE)
+    return _font
 
 
 # ============================================
