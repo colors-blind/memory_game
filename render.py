@@ -5,27 +5,26 @@
 此模块包含以下功能：
 - 坐标转换（棋盘坐标 -> 像素坐标）
 - 图标的绘制（形状和汉字）
-- 棋盘的整体绘制
+- 棋盘的整体绘制（支持动态大小）
 - 翻牌动画（翻开和覆盖）
 - 开场动画（快速预览所有格子）
 - 胜利动画（闪烁效果）
-- 菜单界面绘制（模式选择）
+- 计时器显示
+- 菜单界面绘制（模式选择、棋盘大小选择）
 """
 
 import random
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import pygame
 
-from board import Board, Revealed, create_revealed_state, get_icon, split_every
+from board import Board, Revealed, calculate_board_margins, create_revealed_state, get_icon, split_every
 from config import (
     BACKGROUND_COLOR,
-    BOARD_COLUMNS,
-    BOARD_ROWS,
+    BOARD_SIZE_LEVELS,
     BOX_COVER_COLOR,
-    BOX_SIZE,
-    FONT_OFFSET_X,
-    FONT_OFFSET_Y,
+    DEFAULT_BOARD_COLUMNS,
+    DEFAULT_BOARD_ROWS,
     FONT_SIZE,
     FPS,
     GAP_SIZE,
@@ -33,10 +32,12 @@ from config import (
     MODE_CHINESE,
     MODE_COLOR,
     REVEAL_SPEED,
+    TIMER_COLOR,
+    TIMER_FONT_SIZE,
+    TIMER_POSITION_X,
+    TIMER_POSITION_Y,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
-    X_MARGIN,
-    Y_MARGIN,
 )
 
 # ============================================
@@ -46,6 +47,9 @@ from config import (
 # 字体对象（用于汉字渲染）
 # 在 initialize_font() 函数中初始化
 _font: Optional[pygame.font.Font] = None
+
+# 计时器字体对象
+_timer_font: Optional[pygame.font.Font] = None
 
 
 # ============================================
@@ -132,12 +136,10 @@ def initialize_font() -> pygame.font.Font:
         "sourcehanserifcn",        # 思源宋体
     ]
     
-    # 打印系统中包含 "chinese"、"cjk"、"hei"、"song" 等关键字的字体
-    # 帮助用户了解系统中有哪些中文字体
+    # 打印系统中包含中文相关关键字的字体
     print("检测到的可能支持中文的字体:")
     for font_name in available_fonts:
         lower_name = font_name.lower()
-        # 检查字体名称是否包含中文相关的关键字
         chinese_keywords = [
             "chinese", "cjk", "sc", "tc", "cn", "tw", "hk",
             "hei", "song", "kai", "fang", "ming", "yuan",
@@ -154,17 +156,13 @@ def initialize_font() -> pygame.font.Font:
     print("正在尝试加载中文字体...")
     
     # 方法1: 使用 match_font 查找字体文件路径
-    # 这是更可靠的方法，可以直接找到字体文件的完整路径
     for font_name in chinese_font_names:
         try:
-            # 使用 match_font 查找字体文件路径
-            # bold=False, italic=False
             font_path = pygame.font.match_font(font_name, bold=False, italic=False)
             
             if font_path:
                 print(f"找到字体文件: {font_path}")
                 
-                # 直接使用字体文件路径创建字体对象
                 _font = pygame.font.Font(font_path, FONT_SIZE)
                 
                 # 测试字体是否支持中文
@@ -175,17 +173,14 @@ def initialize_font() -> pygame.font.Font:
                     print(f"成功加载字体: {font_name} (路径: {font_path})")
                     return _font
                     
-        except Exception as e:
-            # 继续尝试下一个字体
+        except Exception:
             continue
     
     # 方法2: 使用 SysFont 加载（备选方法）
     for font_name in chinese_font_names:
         try:
-            # 尝试使用 SysFont 加载字体
             _font = pygame.font.SysFont(font_name, FONT_SIZE, bold=False, italic=False)
             
-            # 测试字体是否支持中文
             test_text = "中文测试"
             metrics = _font.metrics(test_text)
             
@@ -193,14 +188,11 @@ def initialize_font() -> pygame.font.Font:
                 print(f"成功加载字体: {font_name}")
                 return _font
                 
-        except Exception as e:
-            # 继续尝试下一个字体
+        except Exception:
             continue
     
     # 方法3: 尝试使用常见的字体文件名直接查找
-    # 有些字体可能不在系统字体列表中，但在特定路径下
     common_font_files = [
-        # Linux 常见字体路径
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -208,21 +200,13 @@ def initialize_font() -> pygame.font.Font:
         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
         "/usr/share/fonts/truetype/arphic/uming.ttc",
         "/usr/share/fonts/truetype/arphic/ukai.ttc",
-        
-        # 通用字体名称（让 Pygame 自己查找）
-        "wqy-microhei",
-        "wqy-zenhei",
-        "NotoSansCJKsc",
-        "DroidSansFallback",
     ]
     
     print("尝试直接加载常见中文字体文件...")
     for font_path in common_font_files:
         try:
-            # 尝试直接加载字体文件
             _font = pygame.font.Font(font_path, FONT_SIZE)
             
-            # 测试字体是否支持中文
             test_text = "中文测试"
             metrics = _font.metrics(test_text)
             
@@ -230,26 +214,22 @@ def initialize_font() -> pygame.font.Font:
                 print(f"成功加载字体文件: {font_path}")
                 return _font
                 
-        except Exception as e:
-            # 继续尝试下一个字体
+        except Exception:
             continue
     
     # 如果使用名称找不到字体，尝试使用默认字体
     print("警告：未找到支持中文的系统字体，尝试使用默认字体...")
     
-    # 尝试使用 pygame.font.get_default_font()
     try:
         default_font_name = pygame.font.get_default_font()
         print(f"Pygame 默认字体: {default_font_name}")
         
-        # 尝试使用默认字体名称加载
         _font = pygame.font.SysFont(default_font_name, FONT_SIZE)
         return _font
     except Exception:
         pass
     
     # 最后的备选方案：使用 None 作为字体名称
-    # 这会让 Pygame 使用内置的默认字体
     print("使用 Pygame 内置默认字体（可能不支持中文）")
     print("提示：如果中文显示为方块，请安装中文字体")
     print("常见 Linux 中文字体包：")
@@ -261,39 +241,79 @@ def initialize_font() -> pygame.font.Font:
     return _font
 
 
-# ============================================
-# 坐标转换函数
-# ============================================
-
-def left_top_of_box(box_x: int, box_y: int) -> Tuple[int, int]:
+def get_timer_font() -> pygame.font.Font:
     """
-    根据棋盘格子坐标计算其左上角的像素坐标。
-    
-    棋盘坐标从 (0, 0) 开始，对应左上角的第一个格子。
-    像素坐标用于 Pygame 的绘制函数。
-    
-    参数:
-        box_x: 格子的列索引（从 0 开始）
-        box_y: 格子的行索引（从 0 开始）
+    获取计时器专用的字体对象。
     
     返回:
-        (left, top) 元组，表示格子左上角的像素坐标
+        用于计时器显示的字体对象
+    """
+    global _timer_font
+    
+    if _timer_font is not None:
+        return _timer_font
+    
+    # 初始化字体
+    initialize_font()
+    
+    # 尝试使用支持中文的字体
+    try:
+        # 使用系统字体
+        _timer_font = pygame.font.Font(None, TIMER_FONT_SIZE)
+    except Exception:
+        _timer_font = pygame.font.Font(None, TIMER_FONT_SIZE)
+    
+    return _timer_font
+
+
+# ============================================
+# 坐标转换函数（动态版本）
+# ============================================
+
+def create_left_top_calculator(
+    x_margin: int,
+    y_margin: int,
+    box_size: int,
+    gap_size: int = GAP_SIZE,
+) -> Callable[[int, int], Tuple[int, int]]:
+    """
+    创建一个用于计算格子左上角坐标的函数。
+    
+    由于不同棋盘大小有不同的边距和格子尺寸，我们使用闭包来封装这些参数。
+    
+    参数:
+        x_margin: 左侧边距
+        y_margin: 顶部边距
+        box_size: 格子尺寸
+        gap_size: 格子间距
+    
+    返回:
+        一个函数，接收 (box_x, box_y) 并返回 (left, top)
     
     示例:
-        >>> left_top_of_box(0, 0)
-        (70, 65)  # 取决于 X_MARGIN 和 Y_MARGIN 的值
-        
-        >>> left_top_of_box(1, 0)
-        (120, 65)  # 70 + 40 + 10 = 120
-    
-    计算逻辑:
-        left = X_MARGIN + box_x * (BOX_SIZE + GAP_SIZE)
-        top = Y_MARGIN + box_y * (BOX_SIZE + GAP_SIZE)
+        >>> calc = create_left_top_calculator(70, 65, 40, 10)
+        >>> calc(0, 0)
+        (70, 65)
+        >>> calc(1, 0)
+        (120, 65)
     """
-    return (
-        box_x * (BOX_SIZE + GAP_SIZE) + X_MARGIN,
-        box_y * (BOX_SIZE + GAP_SIZE) + Y_MARGIN,
-    )
+    def left_top_of_box(box_x: int, box_y: int) -> Tuple[int, int]:
+        """
+        根据棋盘格子坐标计算其左上角的像素坐标。
+        
+        参数:
+            box_x: 格子的列索引（从 0 开始）
+            box_y: 格子的行索引（从 0 开始）
+        
+        返回:
+            (left, top) 元组，表示格子左上角的像素坐标
+        """
+        return (
+            x_margin + box_x * (box_size + gap_size),
+            y_margin + box_y * (box_size + gap_size),
+        )
+    
+    return left_top_of_box
 
 
 # ============================================
@@ -306,6 +326,8 @@ def draw_icon(
     color: Tuple[int, int, int],
     box_x: int,
     box_y: int,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
     mode: str = MODE_COLOR,
 ):
     """
@@ -316,24 +338,19 @@ def draw_icon(
     - 汉字模式：绘制汉字字符
     
     参数:
-        surface: Pygame 绘制表面（通常是窗口表面）
+        surface: Pygame 绘制表面
         shape_or_char: 形状标识（颜色模式）或汉字字符（汉字模式）
-        color: 图标颜色（RGB 元组）
+        color: 图标颜色
         box_x: 格子的列索引
         box_y: 格子的行索引
-        mode: 绘制模式，MODE_COLOR 或 MODE_CHINESE
-    
-    示例:
-        # 颜色模式：绘制一个红色的圆形（形状 'a'）
-        >>> draw_icon(surface, 'a', (255, 0, 0), 0, 0, MODE_COLOR)
-        
-        # 汉字模式：绘制一个红色的'一'字
-        >>> draw_icon(surface, '一', (255, 0, 0), 0, 0, MODE_CHINESE)
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
+        mode: 绘制模式
     """
     if mode == MODE_CHINESE:
-        _draw_chinese_icon(surface, shape_or_char, color, box_x, box_y)
+        _draw_chinese_icon(surface, shape_or_char, color, box_x, box_y, left_top_func, box_size)
     else:
-        _draw_shape_icon(surface, shape_or_char, color, box_x, box_y)
+        _draw_shape_icon(surface, shape_or_char, color, box_x, box_y, left_top_func, box_size)
 
 
 def _draw_shape_icon(
@@ -342,6 +359,8 @@ def _draw_shape_icon(
     color: Tuple[int, int, int],
     box_x: int,
     box_y: int,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
 ):
     """
     绘制颜色模式的几何形状图标（内部函数）。
@@ -352,67 +371,99 @@ def _draw_shape_icon(
     - 'c': 菱形（旋转45度的正方形）
     - 'd': 对角线装饰
     - 'e': 椭圆
+    - 'f': 三角形
+    - 'g': 星形
     
     参数:
         surface: Pygame 绘制表面
-        shape: 形状标识 ('a'-'e')
+        shape: 形状标识 ('a'-'g')
         color: 形状颜色
         box_x: 格子的列索引
         box_y: 格子的行索引
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
     """
     # 获取格子左上角的像素坐标
-    left, top = left_top_of_box(box_x, box_y)
+    left, top = left_top_func(box_x, box_y)
     
-    # 计算格子中心坐标（用于绘制对称图形）
-    center_x = left + BOX_SIZE // 2
-    center_y = top + BOX_SIZE // 2
+    # 计算格子中心坐标
+    center_x = left + box_size // 2
+    center_y = top + box_size // 2
+    
+    # 计算比例因子（相对于默认 40 像素的格子）
+    scale = box_size / 40.0
     
     if shape == "a":
         # 形状 'a': 圆环
-        # 外层实心圆
-        pygame.draw.circle(surface, color, (center_x, center_y), 15)
-        # 内层用背景色绘制一个小圆，形成圆环效果
-        pygame.draw.circle(surface, BACKGROUND_COLOR, (center_x, center_y), 5)
+        outer_radius = int(15 * scale)
+        inner_radius = int(5 * scale)
+        pygame.draw.circle(surface, color, (center_x, center_y), outer_radius)
+        pygame.draw.circle(surface, BACKGROUND_COLOR, (center_x, center_y), inner_radius)
         
     elif shape == "b":
         # 形状 'b': 正方形
-        # 计算正方形的位置和大小（居中，边长 20）
-        rect_left = left + 10
-        rect_top = top + 10
-        pygame.draw.rect(surface, color, (rect_left, rect_top, 20, 20))
+        margin = int(10 * scale)
+        size = int(20 * scale)
+        pygame.draw.rect(surface, color, (left + margin, top + margin, size, size))
         
     elif shape == "c":
         # 形状 'c': 菱形
-        # 定义四个顶点（顺时针方向）
-        # 上顶点、右顶点、下顶点、左顶点
+        half_size = box_size // 2
         vertices = (
-            (center_x, top),                    # 上
-            (left + BOX_SIZE - 1, center_y),   # 右
-            (center_x, top + BOX_SIZE - 1),    # 下
-            (left, center_y),                   # 左
+            (center_x, top),
+            (left + box_size - 1, center_y),
+            (center_x, top + box_size - 1),
+            (left, center_y),
         )
         pygame.draw.polygon(surface, color, vertices)
         
     elif shape == "d":
         # 形状 'd': 对角线装饰
-        # 绘制两组交叉的对角线
-        for i in range(0, BOX_SIZE, 4):
-            # 从左上到右下的对角线（上半部分）
+        step = max(2, int(4 * scale))
+        for i in range(0, box_size, step):
             pygame.draw.line(surface, color, (left, top + i), (left + i, top))
-            # 从右下到左上的对角线（下半部分）
             pygame.draw.line(
                 surface,
                 color,
-                (left + i, top + BOX_SIZE - 1),
-                (left + BOX_SIZE - 1, top + i),
+                (left + i, top + box_size - 1),
+                (left + box_size - 1, top + i),
             )
             
     elif shape == "e":
         # 形状 'e': 椭圆
-        # 计算椭圆的包围矩形
-        # 椭圆在垂直方向居中，水平方向占满整个格子
-        ellipse_rect = (left, top + 10, BOX_SIZE, 20)
+        margin_y = int(10 * scale)
+        height = int(20 * scale)
+        ellipse_rect = (left, top + margin_y, box_size, height)
         pygame.draw.ellipse(surface, color, ellipse_rect)
+        
+    elif shape == "f":
+        # 形状 'f': 三角形
+        margin = int(5 * scale)
+        vertices = (
+            (center_x, top + margin),
+            (left + box_size - margin, top + box_size - margin),
+            (left + margin, top + box_size - margin),
+        )
+        pygame.draw.polygon(surface, color, vertices)
+        
+    elif shape == "g":
+        # 形状 'g': 星形（简化版）
+        # 绘制一个 X 形
+        margin = int(8 * scale)
+        pygame.draw.line(
+            surface,
+            color,
+            (left + margin, top + margin),
+            (left + box_size - margin, top + box_size - margin),
+            max(2, int(3 * scale)),
+        )
+        pygame.draw.line(
+            surface,
+            color,
+            (left + box_size - margin, top + margin),
+            (left + margin, top + box_size - margin),
+            max(2, int(3 * scale)),
+        )
 
 
 def _draw_chinese_icon(
@@ -421,12 +472,11 @@ def _draw_chinese_icon(
     color: Tuple[int, int, int],
     box_x: int,
     box_y: int,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
 ):
     """
     绘制汉字模式的汉字图标（内部函数）。
-    
-    使用 Pygame 的字体渲染功能绘制汉字。
-    汉字会在格子中居中显示。
     
     参数:
         surface: Pygame 绘制表面
@@ -434,21 +484,26 @@ def _draw_chinese_icon(
         color: 汉字颜色
         box_x: 格子的列索引
         box_y: 格子的行索引
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
     """
     # 获取格子左上角的像素坐标
-    left, top = left_top_of_box(box_x, box_y)
+    left, top = left_top_func(box_x, box_y)
     
     # 确保字体已初始化
     font = initialize_font()
     
     # 渲染汉字为图像
-    # antialias=True 表示开启抗锯齿，使文字边缘更平滑
     text_surface = font.render(char, True, color)
     
     # 计算文字的居中位置
-    # 文字在格子中的位置 = 格子左上角 + 偏移量
-    text_x = left + FONT_OFFSET_X
-    text_y = top + FONT_OFFSET_Y
+    # 动态计算偏移量，使文字在不同大小的格子中都能居中
+    text_rect = text_surface.get_rect()
+    offset_x = (box_size - text_rect.width) // 2
+    offset_y = (box_size - text_rect.height) // 2
+    
+    text_x = left + offset_x
+    text_y = top + offset_y
     
     # 绘制文字到表面
     surface.blit(text_surface, (text_x, text_y))
@@ -462,6 +517,10 @@ def draw_board(
     surface: pygame.Surface,
     board: Board,
     revealed: Revealed,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
+    columns: int,
+    rows: int,
     mode: str = MODE_COLOR,
 ):
     """
@@ -475,63 +534,166 @@ def draw_board(
         surface: Pygame 绘制表面
         board: 棋盘二维列表
         revealed: 翻开状态二维列表
-        mode: 游戏模式（决定图标的绘制方式）
-    
-    绘制流程:
-        1. 遍历每一列
-        2. 遍历每一行
-        3. 检查格子是否已翻开
-        4. 根据状态绘制覆盖色或图标
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
+        columns: 棋盘列数
+        rows: 棋盘行数
+        mode: 游戏模式
     """
-    for box_x in range(BOARD_COLUMNS):
-        for box_y in range(BOARD_ROWS):
+    for box_x in range(columns):
+        for box_y in range(rows):
             # 获取格子左上角的像素坐标
-            left, top = left_top_of_box(box_x, box_y)
+            left, top = left_top_func(box_x, box_y)
             
             if not revealed[box_x][box_y]:
                 # 格子未翻开：绘制覆盖色（白色方块）
-                pygame.draw.rect(surface, BOX_COVER_COLOR, (left, top, BOX_SIZE, BOX_SIZE))
+                pygame.draw.rect(surface, BOX_COVER_COLOR, (left, top, box_size, box_size))
             else:
                 # 格子已翻开：获取并绘制图标
                 shape_or_char, color = get_icon(board, box_x, box_y)
-                draw_icon(surface, shape_or_char, color, box_x, box_y, mode)
+                draw_icon(surface, shape_or_char, color, box_x, box_y, left_top_func, box_size, mode)
 
 
 # ============================================
 # 高亮绘制函数
 # ============================================
 
-def draw_highlight(surface: pygame.Surface, box_x: int, box_y: int):
+def draw_highlight(
+    surface: pygame.Surface,
+    box_x: int,
+    box_y: int,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
+):
     """
     绘制格子的高亮边框。
     
     当鼠标悬停在未翻开的格子上时，显示一个蓝色边框。
-    边框比格子稍大，形成突出显示效果。
     
     参数:
         surface: Pygame 绘制表面
         box_x: 格子的列索引
         box_y: 格子的行索引
-    
-    绘制效果:
-        - 边框向外扩展 5 像素
-        - 边框宽度 4 像素
-        - 边框颜色为蓝色 (HIGHLIGHT_COLOR)
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
     """
     # 获取格子左上角的像素坐标
-    left, top = left_top_of_box(box_x, box_y)
+    left, top = left_top_func(box_x, box_y)
     
-    # 计算高亮边框的矩形
-    # 向左和向上扩展 5 像素，宽度和高度各增加 10 像素
+    # 计算高亮边框的矩形（向外扩展 5 像素）
+    margin = 5
+    border_width = 4
     highlight_rect = (
-        left - 5,           # 左边界向左扩展 5 像素
-        top - 5,            # 上边界向上扩展 5 像素
-        BOX_SIZE + 10,      # 宽度增加 10 像素（左右各 5）
-        BOX_SIZE + 10,      # 高度增加 10 像素（上下各 5）
+        left - margin,
+        top - margin,
+        box_size + margin * 2,
+        box_size + margin * 2,
     )
     
-    # 绘制边框（width=4 表示只绘制边框，不填充）
-    pygame.draw.rect(surface, HIGHLIGHT_COLOR, highlight_rect, 4)
+    # 绘制边框
+    pygame.draw.rect(surface, HIGHLIGHT_COLOR, highlight_rect, border_width)
+
+
+# ============================================
+# 计时器绘制函数
+# ============================================
+
+def format_time(seconds: float) -> str:
+    """
+    将秒数格式化为分:秒.毫秒的格式。
+    
+    参数:
+        seconds: 秒数（可以是浮点数）
+    
+    返回:
+        格式化的时间字符串，如 "01:23.456"
+    
+    示例:
+        >>> format_time(83.456)
+        '01:23.456'
+        >>> format_time(5.5)
+        '00:05.500'
+    """
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    milliseconds = int((seconds * 1000) % 1000)
+    return f"{minutes:02d}:{secs:02d}.{milliseconds:03d}"
+
+
+def draw_timer(
+    surface: pygame.Surface,
+    elapsed_seconds: float,
+    is_running: bool = True,
+):
+    """
+    绘制游戏计时器。
+    
+    在屏幕顶部显示已用时间。
+    
+    参数:
+        surface: Pygame 绘制表面
+        elapsed_seconds: 已用时间（秒）
+        is_running: 计时器是否正在运行（影响显示颜色）
+    """
+    # 获取计时器字体
+    font = get_timer_font()
+    
+    # 格式化时间
+    time_str = format_time(elapsed_seconds)
+    
+    # 选择颜色
+    if is_running:
+        color = TIMER_COLOR
+    else:
+        # 暂停或结束时使用不同的颜色
+        color = (0, 255, 0)  # 绿色
+    
+    # 渲染时间文本
+    text_surface = font.render(f"时间: {time_str}", True, color)
+    
+    # 绘制到屏幕
+    surface.blit(text_surface, (TIMER_POSITION_X, TIMER_POSITION_Y))
+
+
+def draw_game_info(
+    surface: pygame.Surface,
+    elapsed_seconds: float,
+    board_size_name: str,
+    mode_name: str,
+):
+    """
+    绘制游戏信息栏。
+    
+    显示计时器、棋盘大小、游戏模式等信息。
+    
+    参数:
+        surface: Pygame 绘制表面
+        elapsed_seconds: 已用时间（秒）
+        board_size_name: 棋盘大小名称（如 "中等 (6×6)"）
+        mode_name: 游戏模式名称（如 "颜色模式" 或 "汉字模式"）
+    """
+    # 获取字体
+    font = get_timer_font()
+    
+    # 格式化时间
+    time_str = format_time(elapsed_seconds)
+    
+    # 绘制时间
+    time_text = f"时间: {time_str}"
+    time_surface = font.render(time_text, True, TIMER_COLOR)
+    surface.blit(time_surface, (TIMER_POSITION_X, TIMER_POSITION_Y))
+    
+    # 绘制棋盘大小（在右侧）
+    size_text = f"难度: {board_size_name}"
+    size_surface = font.render(size_text, True, TIMER_COLOR)
+    size_x = WINDOW_WIDTH - size_surface.get_width() - TIMER_POSITION_X
+    surface.blit(size_surface, (size_x, TIMER_POSITION_Y))
+    
+    # 绘制模式（在中间）
+    mode_text = f"模式: {mode_name}"
+    mode_surface = font.render(mode_text, True, TIMER_COLOR)
+    mode_x = (WINDOW_WIDTH - mode_surface.get_width()) // 2
+    surface.blit(mode_surface, (mode_x, TIMER_POSITION_Y))
 
 
 # ============================================
@@ -544,49 +706,43 @@ def _draw_box_covers(
     boxes: List[Tuple[int, int]],
     coverage: int,
     clock: pygame.time.Clock,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
     mode: str = MODE_COLOR,
 ):
     """
     绘制带有部分覆盖效果的格子（内部函数）。
     
-    此函数用于翻牌动画的每一帧绘制。
-    通过逐渐改变覆盖宽度，实现翻开/覆盖的动画效果。
-    
     参数:
         surface: Pygame 绘制表面
         board: 棋盘二维列表
-        boxes: 要绘制的格子坐标列表 [(box_x, box_y), ...]
-        coverage: 覆盖宽度（像素）。0 表示完全翻开，BOX_SIZE 表示完全覆盖
-        clock: Pygame 时钟对象（用于控制帧率）
+        boxes: 要绘制的格子坐标列表
+        coverage: 覆盖宽度（像素）
+        clock: Pygame 时钟对象
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
         mode: 游戏模式
-    
-    绘制流程:
-        1. 绘制背景色（清除之前的内容）
-        2. 绘制完整的图标
-        3. 如果 coverage > 0，绘制覆盖矩形
-        4. 更新显示并控制帧率
     """
     for box_x, box_y in boxes:
         # 获取格子左上角的像素坐标
-        left, top = left_top_of_box(box_x, box_y)
+        left, top = left_top_func(box_x, box_y)
         
-        # 1. 先绘制背景色（清除此格子区域）
-        pygame.draw.rect(surface, BACKGROUND_COLOR, (left, top, BOX_SIZE, BOX_SIZE))
+        # 1. 先绘制背景色
+        pygame.draw.rect(surface, BACKGROUND_COLOR, (left, top, box_size, box_size))
         
         # 2. 绘制完整的图标
         shape_or_char, color = get_icon(board, box_x, box_y)
-        draw_icon(surface, shape_or_char, color, box_x, box_y, mode)
+        draw_icon(surface, shape_or_char, color, box_x, box_y, left_top_func, box_size, mode)
         
         # 3. 如果需要覆盖，绘制覆盖矩形
-        # coverage 表示从左侧开始覆盖的宽度
         if coverage > 0:
-            cover_rect = (left, top, coverage, BOX_SIZE)
+            cover_rect = (left, top, coverage, box_size)
             pygame.draw.rect(surface, BOX_COVER_COLOR, cover_rect)
     
     # 更新显示
     pygame.display.update()
     
-    # 控制帧率（确保动画速度一致）
+    # 控制帧率
     clock.tick(FPS)
 
 
@@ -599,35 +755,25 @@ def reveal_boxes_animation(
     board: Board,
     boxes: List[Tuple[int, int]],
     clock: pygame.time.Clock,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
     mode: str = MODE_COLOR,
 ):
     """
     翻开格子的动画效果。
-    
-    模拟从左向右掀开覆盖层的效果。
-    覆盖宽度从 BOX_SIZE（完全覆盖）逐渐减小到 0（完全翻开）。
     
     参数:
         surface: Pygame 绘制表面
         board: 棋盘二维列表
         boxes: 要翻开的格子坐标列表
         clock: Pygame 时钟对象
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
         mode: 游戏模式
-    
-    动画过程:
-        1. coverage = BOX_SIZE（完全覆盖，只看到白色）
-        2. coverage 逐渐减小（图标从右侧逐渐露出）
-        3. coverage = 0（完全翻开，看到完整图标）
-    
-    示例:
-        >>> # 翻开第 1 列第 1 行的格子
-        >>> reveal_boxes_animation(surface, board, [(0, 0)], clock)
     """
     # 从完全覆盖到完全翻开
-    # 步长为 -REVEAL_SPEED，表示每次减少 REVEAL_SPEED 像素
-    # 终止值为 (-REVEAL_SPEED) - 1，确保能覆盖到 0
-    for coverage in range(BOX_SIZE, (-REVEAL_SPEED) - 1, -REVEAL_SPEED):
-        _draw_box_covers(surface, board, boxes, coverage, clock, mode)
+    for coverage in range(box_size, (-REVEAL_SPEED) - 1, -REVEAL_SPEED):
+        _draw_box_covers(surface, board, boxes, coverage, clock, left_top_func, box_size, mode)
 
 
 def cover_boxes_animation(
@@ -635,33 +781,25 @@ def cover_boxes_animation(
     board: Board,
     boxes: List[Tuple[int, int]],
     clock: pygame.time.Clock,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
     mode: str = MODE_COLOR,
 ):
     """
     覆盖格子的动画效果。
-    
-    模拟从左向右盖上覆盖层的效果。
-    覆盖宽度从 0（完全翻开）逐渐增加到 BOX_SIZE（完全覆盖）。
     
     参数:
         surface: Pygame 绘制表面
         board: 棋盘二维列表
         boxes: 要覆盖的格子坐标列表
         clock: Pygame 时钟对象
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
         mode: 游戏模式
-    
-    动画过程:
-        1. coverage = 0（完全翻开，看到完整图标）
-        2. coverage 逐渐增大（覆盖层从左侧逐渐向右扩展）
-        3. coverage = BOX_SIZE（完全覆盖，只看到白色）
-    
-    用途:
-        当玩家翻开的两个格子不匹配时，短暂显示后用此动画重新覆盖
     """
     # 从完全翻开到完全覆盖
-    # 终止值为 BOX_SIZE + REVEAL_SPEED，确保能覆盖到 BOX_SIZE
-    for coverage in range(0, BOX_SIZE + REVEAL_SPEED, REVEAL_SPEED):
-        _draw_box_covers(surface, board, boxes, coverage, clock, mode)
+    for coverage in range(0, box_size + REVEAL_SPEED, REVEAL_SPEED):
+        _draw_box_covers(surface, board, boxes, coverage, clock, left_top_func, box_size, mode)
 
 
 # ============================================
@@ -672,93 +810,82 @@ def start_game_animation(
     surface: pygame.Surface,
     board: Board,
     clock: pygame.time.Clock,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
+    columns: int,
+    rows: int,
     mode: str = MODE_COLOR,
 ):
     """
     游戏开始时的开场动画。
     
     快速预览所有格子的位置，帮助玩家记忆。
-    格子会分组进行翻开-覆盖的动画效果。
     
     参数:
         surface: Pygame 绘制表面
         board: 棋盘二维列表
         clock: Pygame 时钟对象
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
+        columns: 棋盘列数
+        rows: 棋盘行数
         mode: 游戏模式
-    
-    动画流程:
-        1. 创建全未翻开的状态
-        2. 生成所有格子的坐标列表并随机打乱
-        3. 将坐标分成每组 8 个
-        4. 对每组依次执行：
-           - 翻开动画（快速显示图标）
-           - 覆盖动画（重新隐藏）
-    
-    设计目的:
-        - 让玩家在游戏开始前快速预览所有格子的位置
-        - 增加游戏的趣味性和挑战性
-        - 分组动画避免一次性显示过多信息
     """
     # 创建全未翻开的状态
-    revealed = create_revealed_state(False)
+    revealed = create_revealed_state(False, columns, rows)
     
     # 生成所有格子的坐标列表
-    # 格式: [(0,0), (0,1), ..., (9,6)]
-    boxes = [(x, y) for x in range(BOARD_COLUMNS) for y in range(BOARD_ROWS)]
+    boxes = [(x, y) for x in range(columns) for y in range(rows)]
     
     # 随机打乱顺序
     random.shuffle(boxes)
     
-    # 分成每组 8 个
-    grouped = split_every(8, boxes)
+    # 分成每组（根据棋盘大小调整每组数量）
+    group_size = max(4, min(8, columns * rows // 5))
+    grouped = split_every(group_size, boxes)
     
     # 先绘制一次全未翻开的棋盘
-    draw_board(surface, board, revealed, mode)
+    draw_board(surface, board, revealed, left_top_func, box_size, columns, rows, mode)
     
     # 对每组执行翻开-覆盖动画
     for group in grouped:
-        # 快速翻开（预览）
-        reveal_boxes_animation(surface, board, group, clock, mode)
-        # 快速覆盖（重新隐藏）
-        cover_boxes_animation(surface, board, group, clock, mode)
+        reveal_boxes_animation(surface, board, group, clock, left_top_func, box_size, mode)
+        cover_boxes_animation(surface, board, group, clock, left_top_func, box_size, mode)
 
 
 # ============================================
 # 胜利动画函数
 # ============================================
 
-def game_won_animation(surface: pygame.Surface, board: Board, mode: str = MODE_COLOR):
+def game_won_animation(
+    surface: pygame.Surface,
+    board: Board,
+    left_top_func: Callable[[int, int], Tuple[int, int]],
+    box_size: int,
+    columns: int,
+    rows: int,
+    mode: str = MODE_COLOR,
+):
     """
     游戏胜利时的庆祝动画。
-    
-    背景色交替闪烁，营造庆祝氛围。
     
     参数:
         surface: Pygame 绘制表面
         board: 棋盘二维列表
+        left_top_func: 计算格子左上角坐标的函数
+        box_size: 格子尺寸
+        columns: 棋盘列数
+        rows: 棋盘行数
         mode: 游戏模式
-    
-    动画效果:
-        - 背景色在两种颜色之间交替切换
-        - 棋盘保持显示（所有格子已翻开）
-        - 共闪烁 13 次
-        - 每次闪烁间隔 300 毫秒
-    
-    设计目的:
-        - 给玩家明确的胜利反馈
-        - 营造庆祝氛围
-        - 闪烁次数为奇数，确保最终停在背景色上
     """
     # 创建全翻开的状态
-    revealed = create_revealed_state(True)
+    revealed = create_revealed_state(True, columns, rows)
     
     # 定义两种闪烁颜色
-    # color1: 深灰色
-    # color2: 正常背景色
     color1 = (100, 100, 100)
     color2 = BACKGROUND_COLOR
     
-    # 闪烁 13 次（奇数次，确保最后停在背景色）
+    # 闪烁 13 次
     for _ in range(13):
         # 交换两种颜色
         color1, color2 = color2, color1
@@ -766,13 +893,13 @@ def game_won_animation(surface: pygame.Surface, board: Board, mode: str = MODE_C
         # 填充背景色
         surface.fill(color1)
         
-        # 绘制棋盘（所有格子已翻开）
-        draw_board(surface, board, revealed, mode)
+        # 绘制棋盘
+        draw_board(surface, board, revealed, left_top_func, box_size, columns, rows, mode)
         
         # 更新显示
         pygame.display.update()
         
-        # 等待 300 毫秒
+        # 等待
         pygame.time.wait(300)
 
 
@@ -783,7 +910,8 @@ def game_won_animation(surface: pygame.Surface, board: Board, mode: str = MODE_C
 def draw_menu(
     surface: pygame.Surface,
     selected_mode: str,
-    selected_difficulty: str,
+    selected_chinese_difficulty: str,
+    selected_board_size: str,
 ):
     """
     绘制游戏开始菜单。
@@ -791,18 +919,15 @@ def draw_menu(
     菜单包含：
     - 游戏标题
     - 模式选择（颜色模式 / 汉字模式）
-    - 难度选择（仅在汉字模式下显示）
+    - 棋盘大小选择（简单/中等/困难/专家）
+    - 汉字难度选择（仅在汉字模式下显示）
     - 开始游戏提示
     
     参数:
         surface: Pygame 绘制表面
-        selected_mode: 当前选中的模式 (MODE_COLOR 或 MODE_CHINESE)
-        selected_difficulty: 当前选中的难度 ("easy", "medium", "hard")
-    
-    绘制效果:
-        - 选中的选项用亮色高亮显示
-        - 未选中的选项用暗色显示
-        - 使用不同的 Y 坐标实现垂直布局
+        selected_mode: 当前选中的模式
+        selected_chinese_difficulty: 当前选中的汉字难度
+        selected_board_size: 当前选中的棋盘大小
     """
     # 填充背景色
     surface.fill(BACKGROUND_COLOR)
@@ -811,89 +936,117 @@ def draw_menu(
     font = initialize_font()
     
     # 定义颜色
-    text_color = (255, 255, 255)      # 白色（普通文本）
-    highlight_color = (0, 255, 0)       # 绿色（选中项）
-    dim_color = (150, 150, 150)         # 灰色（未选中项）
+    text_color = (255, 255, 255)
+    highlight_color = (0, 255, 0)
+    dim_color = (150, 150, 150)
     
-    # 计算窗口中心（用于居中对齐）
+    # 计算窗口中心
     center_x = WINDOW_WIDTH // 2
+    
+    # 当前 Y 坐标
+    current_y = 60
     
     # ============================================
     # 1. 绘制标题
     # ============================================
+    title_font = pygame.font.Font(None, 56)
     title_text = "记忆翻牌游戏"
-    # 创建大字体（使用默认字体，放大倍数）
-    title_font = pygame.font.Font(None, 48)
     title_surface = title_font.render(title_text, True, text_color)
-    # 计算居中位置
-    title_rect = title_surface.get_rect(centerx=center_x, centery=80)
+    title_rect = title_surface.get_rect(centerx=center_x, centery=current_y)
     surface.blit(title_surface, title_rect)
+    current_y += 50
     
     # ============================================
-    # 2. 绘制模式选择标题
+    # 2. 绘制模式选择
     # ============================================
-    mode_title = "选择游戏模式："
+    mode_title = "选择游戏模式（按 1 或 2）："
     mode_title_surface = font.render(mode_title, True, text_color)
-    mode_title_rect = mode_title_surface.get_rect(centerx=center_x, centery=160)
+    mode_title_rect = mode_title_surface.get_rect(centerx=center_x, centery=current_y)
     surface.blit(mode_title_surface, mode_title_rect)
+    current_y += 35
     
-    # ============================================
-    # 3. 绘制颜色模式选项
-    # ============================================
+    # 颜色模式选项
     color_option = "1. 颜色模式 (图形+颜色)"
-    # 根据是否选中选择颜色
     color_color = highlight_color if selected_mode == MODE_COLOR else dim_color
     color_surface = font.render(color_option, True, color_color)
-    color_rect = color_surface.get_rect(centerx=center_x, centery=200)
+    color_rect = color_surface.get_rect(centerx=center_x, centery=current_y)
     surface.blit(color_surface, color_rect)
+    current_y += 30
     
-    # ============================================
-    # 4. 绘制汉字模式选项
-    # ============================================
+    # 汉字模式选项
     chinese_option = "2. 汉字模式 (汉字+颜色)"
-    # 根据是否选中选择颜色
     chinese_color = highlight_color if selected_mode == MODE_CHINESE else dim_color
     chinese_surface = font.render(chinese_option, True, chinese_color)
-    chinese_rect = chinese_surface.get_rect(centerx=center_x, centery=240)
+    chinese_rect = chinese_surface.get_rect(centerx=center_x, centery=current_y)
     surface.blit(chinese_surface, chinese_rect)
+    current_y += 45
     
     # ============================================
-    # 5. 绘制难度选择（仅在汉字模式下显示）
+    # 3. 绘制棋盘大小选择
+    # ============================================
+    size_title = "选择棋盘大小（按 3/4/5/6）："
+    size_title_surface = font.render(size_title, True, text_color)
+    size_title_rect = size_title_surface.get_rect(centerx=center_x, centery=current_y)
+    surface.blit(size_title_surface, size_title_rect)
+    current_y += 35
+    
+    # 获取所有棋盘大小级别
+    size_levels = list(BOARD_SIZE_LEVELS.keys())
+    size_names = ["简单", "中等", "困难", "专家"]
+    size_keys = ["3", "4", "5", "6"]
+    
+    for i, (level_key, level_info) in enumerate(BOARD_SIZE_LEVELS.items()):
+        size_option = f"{size_keys[i]}. {size_names[i]} ({level_info['columns']}×{level_info['rows']})"
+        size_color = highlight_color if selected_board_size == level_key else dim_color
+        size_surface = font.render(size_option, True, size_color)
+        size_rect = size_surface.get_rect(centerx=center_x, centery=current_y)
+        surface.blit(size_surface, size_rect)
+        current_y += 30
+    
+    current_y += 15
+    
+    # ============================================
+    # 4. 绘制汉字难度选择（仅在汉字模式下显示）
     # ============================================
     if selected_mode == MODE_CHINESE:
-        # 难度选择标题
-        diff_title = "选择难度："
+        diff_title = "选择汉字难度（按 Q/W/E）："
         diff_title_surface = font.render(diff_title, True, text_color)
-        diff_title_rect = diff_title_surface.get_rect(centerx=center_x, centery=300)
+        diff_title_rect = diff_title_surface.get_rect(centerx=center_x, centery=current_y)
         surface.blit(diff_title_surface, diff_title_rect)
+        current_y += 35
         
         # 简单难度选项
         easy_option = "Q. 简单 (常用字)"
-        easy_color = highlight_color if selected_difficulty == "easy" else dim_color
+        easy_color = highlight_color if selected_chinese_difficulty == "easy" else dim_color
         easy_surface = font.render(easy_option, True, easy_color)
-        easy_rect = easy_surface.get_rect(centerx=center_x, centery=340)
+        easy_rect = easy_surface.get_rect(centerx=center_x, centery=current_y)
         surface.blit(easy_surface, easy_rect)
+        current_y += 30
         
         # 中等难度选项
         medium_option = "W. 中等 (相似字)"
-        medium_color = highlight_color if selected_difficulty == "medium" else dim_color
+        medium_color = highlight_color if selected_chinese_difficulty == "medium" else dim_color
         medium_surface = font.render(medium_option, True, medium_color)
-        medium_rect = medium_surface.get_rect(centerx=center_x, centery=380)
+        medium_rect = medium_surface.get_rect(centerx=center_x, centery=current_y)
         surface.blit(medium_surface, medium_rect)
+        current_y += 30
         
         # 困难难度选项
         hard_option = "E. 困难 (生僻字)"
-        hard_color = highlight_color if selected_difficulty == "hard" else dim_color
+        hard_color = highlight_color if selected_chinese_difficulty == "hard" else dim_color
         hard_surface = font.render(hard_option, True, hard_color)
-        hard_rect = hard_surface.get_rect(centerx=center_x, centery=420)
+        hard_rect = hard_surface.get_rect(centerx=center_x, centery=current_y)
         surface.blit(hard_surface, hard_rect)
+        current_y += 30
+    
+    current_y += 25
     
     # ============================================
-    # 6. 绘制开始提示
+    # 5. 绘制开始提示
     # ============================================
     start_hint = "按 空格键 或 回车键 开始游戏"
     start_surface = font.render(start_hint, True, text_color)
-    start_rect = start_surface.get_rect(centerx=center_x, centery=450)
+    start_rect = start_surface.get_rect(centerx=center_x, centery=current_y)
     surface.blit(start_surface, start_rect)
     
     # 更新显示

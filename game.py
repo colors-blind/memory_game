@@ -9,9 +9,11 @@
 - 匹配逻辑判断
 - 支持两种游戏模式（颜色模式 / 汉字模式）
 - 支持汉字模式的三种难度级别
+- 支持四种棋盘大小（简单/中等/困难/专家）
+- 计时器功能
 
 游戏流程:
-    1. 显示开始菜单，让用户选择模式和难度
+    1. 显示开始菜单，让用户选择模式、棋盘大小和汉字难度
     2. 按空格键或回车键开始游戏
     3. 显示开场动画（快速预览所有格子）
     4. 进入游戏主循环：
@@ -24,12 +26,16 @@
     6. 自动重新开始新一局
 """
 
-from typing import Tuple
+from typing import Callable, Tuple
 
 import pygame
 from pygame.locals import (
     K_1,
     K_2,
+    K_3,
+    K_4,
+    K_5,
+    K_6,
     K_ESCAPE,
     K_e,
     K_q,
@@ -42,11 +48,23 @@ from pygame.locals import (
     QUIT,
 )
 
-from board import create_board, create_revealed_state, get_box_at_pixel, get_icon, has_won
+from board import (
+    Board,
+    Revealed,
+    calculate_board_margins,
+    create_board,
+    create_revealed_state,
+    get_box_at_pixel,
+    get_icon,
+    has_won,
+)
 from config import (
     BACKGROUND_COLOR,
-    DEFAULT_DIFFICULTY,
+    BOARD_SIZE_LEVELS,
+    DEFAULT_BOARD_SIZE,
+    DEFAULT_CHINESE_DIFFICULTY,
     FPS,
+    GAP_SIZE,
     MODE_CHINESE,
     MODE_COLOR,
     WINDOW_HEIGHT,
@@ -54,31 +72,47 @@ from config import (
 )
 from render import (
     cover_boxes_animation,
+    create_left_top_calculator,
     draw_board,
+    draw_game_info,
     draw_highlight,
     draw_menu,
     game_won_animation,
     initialize_font,
-    left_top_of_box,
     reveal_boxes_animation,
     start_game_animation,
 )
 
 
 # ============================================
+# 类型定义
+# ============================================
+
+# 坐标计算函数类型
+LeftTopCalculator = Callable[[int, int], Tuple[int, int]]
+
+
+# ============================================
 # 菜单循环函数
 # ============================================
 
-def run_menu(surface: pygame.Surface, clock: pygame.time.Clock) -> Tuple[str, str]:
+def run_menu(
+    surface: pygame.Surface,
+    clock: pygame.time.Clock,
+) -> Tuple[str, str, str]:
     """
-    运行开始菜单，让用户选择游戏模式和难度。
+    运行开始菜单，让用户选择游戏模式、棋盘大小和汉字难度。
     
     菜单操作:
         - 按 '1'：选择颜色模式
         - 按 '2'：选择汉字模式
-        - 按 'Q'：选择简单难度（仅汉字模式）
-        - 按 'W'：选择中等难度（仅汉字模式）
-        - 按 'E'：选择困难难度（仅汉字模式）
+        - 按 '3'：选择简单棋盘大小 (4×4)
+        - 按 '4'：选择中等棋盘大小 (6×6)
+        - 按 '5'：选择困难棋盘大小 (8×6)
+        - 按 '6'：选择专家棋盘大小 (10×7)
+        - 按 'Q'：选择简单汉字难度（常用字）
+        - 按 'W'：选择中等汉字难度（相似字）
+        - 按 'E'：选择困难汉字难度（生僻字）
         - 按 空格键 或 回车键：开始游戏
         - 按 ESC 或关闭窗口：退出游戏
     
@@ -87,26 +121,31 @@ def run_menu(surface: pygame.Surface, clock: pygame.time.Clock) -> Tuple[str, st
         clock: Pygame 时钟对象
     
     返回:
-        (selected_mode, selected_difficulty) 元组
+        (selected_mode, selected_chinese_difficulty, selected_board_size) 元组
         - selected_mode: MODE_COLOR 或 MODE_CHINESE
-        - selected_difficulty: "easy", "medium", 或 "hard"
+        - selected_chinese_difficulty: "easy", "medium", 或 "hard"
+        - selected_board_size: "easy", "medium", "hard", 或 "expert"
     
     示例:
-        >>> mode, difficulty = run_menu(surface, clock)
-        >>> print(mode, difficulty)
-        'chinese', 'easy'
+        >>> mode, chinese_diff, board_size = run_menu(surface, clock)
+        >>> print(mode, chinese_diff, board_size)
+        'color', 'easy', 'medium'
     """
     # 初始化默认选择
-    selected_mode = MODE_COLOR      # 默认选择颜色模式
-    selected_difficulty = DEFAULT_DIFFICULTY  # 默认难度
+    selected_mode = MODE_COLOR                        # 默认选择颜色模式
+    selected_chinese_difficulty = DEFAULT_CHINESE_DIFFICULTY  # 默认汉字难度
+    selected_board_size = DEFAULT_BOARD_SIZE          # 默认棋盘大小
     
     # 初始化字体（确保菜单能正确显示中文）
     initialize_font()
     
+    # 获取棋盘大小级别列表（用于按键映射）
+    size_levels = list(BOARD_SIZE_LEVELS.keys())
+    
     # 菜单主循环
     while True:
         # 绘制菜单界面
-        draw_menu(surface, selected_mode, selected_difficulty)
+        draw_menu(surface, selected_mode, selected_chinese_difficulty, selected_board_size)
         
         # 事件处理循环
         for event in pygame.event.get():
@@ -130,22 +169,36 @@ def run_menu(surface: pygame.Surface, clock: pygame.time.Clock) -> Tuple[str, st
                 elif event.key == K_2:
                     selected_mode = MODE_CHINESE
                 
-                # 难度选择（仅在汉字模式下有效）
+                # 棋盘大小选择（按 3/4/5/6）
+                elif event.key == K_3:
+                    if len(size_levels) >= 1:
+                        selected_board_size = size_levels[0]
+                elif event.key == K_4:
+                    if len(size_levels) >= 2:
+                        selected_board_size = size_levels[1]
+                elif event.key == K_5:
+                    if len(size_levels) >= 3:
+                        selected_board_size = size_levels[2]
+                elif event.key == K_6:
+                    if len(size_levels) >= 4:
+                        selected_board_size = size_levels[3]
+                
+                # 汉字难度选择（仅在汉字模式下有效）
                 elif selected_mode == MODE_CHINESE:
                     # 'Q' 键：选择简单难度
                     if event.key == K_q:
-                        selected_difficulty = "easy"
+                        selected_chinese_difficulty = "easy"
                     # 'W' 键：选择中等难度
                     elif event.key == K_w:
-                        selected_difficulty = "medium"
+                        selected_chinese_difficulty = "medium"
                     # 'E' 键：选择困难难度
                     elif event.key == K_e:
-                        selected_difficulty = "hard"
+                        selected_chinese_difficulty = "hard"
                 
                 # 空格键 或 回车键：开始游戏
                 if event.key == K_SPACE or event.key == K_RETURN:
                     # 返回用户选择，进入游戏主循环
-                    return selected_mode, selected_difficulty
+                    return selected_mode, selected_chinese_difficulty, selected_board_size
         
         # 控制菜单帧率，避免 CPU 占用过高
         clock.tick(FPS)
@@ -159,7 +212,8 @@ def run_game_loop(
     surface: pygame.Surface,
     clock: pygame.time.Clock,
     mode: str,
-    difficulty: str,
+    chinese_difficulty: str,
+    board_size: str,
 ):
     """
     运行游戏主循环。
@@ -170,13 +224,17 @@ def run_game_loop(
         surface: Pygame 绘制表面
         clock: Pygame 时钟对象
         mode: 游戏模式（MODE_COLOR 或 MODE_CHINESE）
-        difficulty: 难度级别（"easy", "medium", "hard"）
+        chinese_difficulty: 汉字难度级别（"easy", "medium", "hard"）
+        board_size: 棋盘大小级别（"easy", "medium", "hard", "expert"）
     
     游戏逻辑:
-        1. 创建随机棋盘
-        2. 创建翻开状态（全部未翻开）
-        3. 显示开场动画
-        4. 进入主循环：
+        1. 根据选择的棋盘大小获取参数
+        2. 计算棋盘边距和创建坐标计算函数
+        3. 创建随机棋盘
+        4. 创建翻开状态（全部未翻开）
+        5. 初始化计时器
+        6. 显示开场动画
+        7. 进入主循环：
            - 处理鼠标移动：高亮悬停的格子
            - 处理鼠标点击：翻开格子
            - 判断两个格子是否匹配
@@ -185,20 +243,55 @@ def run_game_loop(
            - 如果胜利：显示胜利动画，重新开始
     """
     # ============================================
+    # 棋盘参数初始化
+    # ============================================
+    
+    # 获取选择的棋盘大小配置
+    size_config = BOARD_SIZE_LEVELS[board_size]
+    columns = size_config["columns"]      # 列数
+    rows = size_config["rows"]            # 行数
+    box_size = size_config["box_size"]    # 格子尺寸
+    size_name = size_config["name"]       # 显示名称
+    
+    # 计算棋盘边距（使棋盘在窗口中居中，考虑顶部计时器区域）
+    x_margin, y_margin = calculate_board_margins(
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        columns,
+        rows,
+        box_size,
+        GAP_SIZE,
+        timer_height=60,  # 顶部计时器区域高度
+    )
+    
+    # 创建坐标计算函数（闭包，封装边距和格子尺寸）
+    left_top_func = create_left_top_calculator(x_margin, y_margin, box_size, GAP_SIZE)
+    
+    # 获取模式名称（用于显示）
+    mode_name = "颜色模式" if mode == MODE_COLOR else "汉字模式"
+    
+    # ============================================
     # 游戏初始化
     # ============================================
     
     # 创建随机棋盘
     # 根据模式和难度生成不同的棋盘
-    board = create_board(mode, difficulty)
+    board = create_board(mode, chinese_difficulty, columns, rows)
     
     # 创建翻开状态列表，初始全部为 False（未翻开）
-    revealed = create_revealed_state(False)
+    revealed = create_revealed_state(False, columns, rows)
     
     # 记录第一个翻开的格子坐标
     # None 表示还没有翻开第一个格子
     # (box_x, box_y) 表示已翻开第一个格子，等待第二个
     first_selection = None
+    
+    # ============================================
+    # 计时器初始化
+    # ============================================
+    
+    # 记录游戏开始时间（毫秒）
+    start_time = pygame.time.get_ticks()
     
     # ============================================
     # 开场动画
@@ -209,7 +302,19 @@ def run_game_loop(
     
     # 显示开场动画（快速预览所有格子）
     # 帮助玩家记忆格子位置
-    start_game_animation(surface, board, clock, mode)
+    start_game_animation(
+        surface,
+        board,
+        clock,
+        left_top_func,
+        box_size,
+        columns,
+        rows,
+        mode,
+    )
+    
+    # 重置开始时间（开场动画后开始计时）
+    start_time = pygame.time.get_ticks()
     
     # ============================================
     # 鼠标位置跟踪
@@ -232,9 +337,32 @@ def run_game_loop(
         # 清除上一帧的绘制内容
         surface.fill(BACKGROUND_COLOR)
         
+        # ============================================
+        # 计算并显示已用时间
+        # ============================================
+        
+        # 计算已用时间（秒）
+        current_time = pygame.time.get_ticks()
+        elapsed_seconds = (current_time - start_time) / 1000.0
+        
+        # 绘制游戏信息栏（计时器、棋盘大小、模式）
+        draw_game_info(surface, elapsed_seconds, size_name, mode_name)
+        
+        # ============================================
         # 绘制当前棋盘状态
+        # ============================================
+        
         # 根据 revealed 列表决定显示覆盖色还是图标
-        draw_board(surface, board, revealed, mode)
+        draw_board(
+            surface,
+            board,
+            revealed,
+            left_top_func,
+            box_size,
+            columns,
+            rows,
+            mode,
+        )
         
         # ============================================
         # 事件处理
@@ -270,7 +398,14 @@ def run_game_loop(
         
         # 根据鼠标像素坐标获取对应的棋盘格子坐标
         # 如果鼠标不在任何格子上，返回 (None, None)
-        box_x, box_y = get_box_at_pixel(mouse_x, mouse_y, left_top_of_box)
+        box_x, box_y = get_box_at_pixel(
+            mouse_x,
+            mouse_y,
+            left_top_func,
+            columns,
+            rows,
+            box_size,
+        )
         
         # 检查鼠标是否在某个格子上
         if box_x is not None and box_y is not None:
@@ -278,7 +413,7 @@ def run_game_loop(
             if not revealed[box_x][box_y]:
                 # 鼠标悬停在未翻开的格子上，绘制高亮边框
                 # 给玩家视觉反馈，表示可以点击
-                draw_highlight(surface, box_x, box_y)
+                draw_highlight(surface, box_x, box_y, left_top_func, box_size)
             
             # 检查是否点击了未翻开的格子
             if not revealed[box_x][box_y] and mouse_clicked:
@@ -287,7 +422,15 @@ def run_game_loop(
                 # ============================================
                 
                 # 播放翻开动画
-                reveal_boxes_animation(surface, board, [(box_x, box_y)], clock, mode)
+                reveal_boxes_animation(
+                    surface,
+                    board,
+                    [(box_x, box_y)],
+                    clock,
+                    left_top_func,
+                    box_size,
+                    mode,
+                )
                 
                 # 更新翻开状态
                 revealed[box_x][box_y] = True
@@ -322,6 +465,8 @@ def run_game_loop(
                             board,
                             [first_selection, (box_x, box_y)],
                             clock,
+                            left_top_func,
+                            box_size,
                             mode,
                         )
                         
@@ -337,7 +482,15 @@ def run_game_loop(
                             # 游戏胜利！
                             
                             # 播放胜利动画
-                            game_won_animation(surface, board, mode)
+                            game_won_animation(
+                                surface,
+                                board,
+                                left_top_func,
+                                box_size,
+                                columns,
+                                rows,
+                                mode,
+                            )
                             
                             # 等待 2 秒，让玩家享受胜利时刻
                             pygame.time.wait(2000)
@@ -347,20 +500,41 @@ def run_game_loop(
                             # ============================================
                             
                             # 创建新的随机棋盘
-                            board = create_board(mode, difficulty)
+                            board = create_board(mode, chinese_difficulty, columns, rows)
                             
                             # 重置翻开状态
-                            revealed = create_revealed_state(False)
+                            revealed = create_revealed_state(False, columns, rows)
                             
                             # 绘制新棋盘（全部未翻开）
-                            draw_board(surface, board, revealed, mode)
+                            draw_board(
+                                surface,
+                                board,
+                                revealed,
+                                left_top_func,
+                                box_size,
+                                columns,
+                                rows,
+                                mode,
+                            )
                             pygame.display.update()
                             
                             # 等待 1 秒
                             pygame.time.wait(1000)
                             
                             # 播放新一局的开场动画
-                            start_game_animation(surface, board, clock, mode)
+                            start_game_animation(
+                                surface,
+                                board,
+                                clock,
+                                left_top_func,
+                                box_size,
+                                columns,
+                                rows,
+                                mode,
+                            )
+                            
+                            # 重置开始时间
+                            start_time = pygame.time.get_ticks()
                     
                     # 无论是否匹配，重置第一次选择
                     # 准备下一轮的两个格子选择
@@ -412,18 +586,18 @@ def run_game():
     surface = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
     
     # 设置窗口标题
-    pygame.display.set_caption("Memory Game")
+    pygame.display.set_caption("记忆翻牌游戏")
     
     # ============================================
     # 游戏流程控制
     # ============================================
     
     # 先运行开始菜单
-    # 获取用户选择的模式和难度
-    mode, difficulty = run_menu(surface, clock)
+    # 获取用户选择的模式、汉字难度和棋盘大小
+    mode, chinese_difficulty, board_size = run_menu(surface, clock)
     
     # 运行游戏主循环
-    run_game_loop(surface, clock, mode, difficulty)
+    run_game_loop(surface, clock, mode, chinese_difficulty, board_size)
 
 
 # ============================================

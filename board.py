@@ -3,21 +3,23 @@
 棋盘模块 - 负责棋盘的创建、状态管理和核心逻辑
 
 此模块包含以下功能：
-- 创建随机化的游戏棋盘
+- 创建随机化的游戏棋盘（支持动态大小）
 - 管理格子的翻开状态
 - 提供坐标转换和碰撞检测
 - 判断游戏是否胜利
 - 支持两种游戏模式：颜色模式和汉字模式
+- 支持多种棋盘大小（简单/中等/困难/专家）
 """
 
 import random
 from typing import Callable, List, Optional, Tuple
 
 from config import (
-    BOARD_COLUMNS,
-    BOARD_ROWS,
-    BOX_SIZE,
+    DEFAULT_BOARD_COLUMNS,
+    DEFAULT_BOARD_ROWS,
+    DEFAULT_CHINESE_DIFFICULTY,
     DIFFICULTY_LEVELS,
+    GAP_SIZE,
     MODE_CHINESE,
     MODE_COLOR,
     PAIR_COLORS,
@@ -45,65 +47,85 @@ Revealed = List[List[bool]]
 # 状态管理函数
 # ============================================
 
-def create_revealed_state(default: bool) -> Revealed:
+def create_revealed_state(
+    default: bool,
+    columns: int = DEFAULT_BOARD_COLUMNS,
+    rows: int = DEFAULT_BOARD_ROWS,
+) -> Revealed:
     """
     创建一个初始的翻开状态二维列表。
     
     参数:
         default: 初始状态值（True 表示全部翻开，False 表示全部未翻开）
+        columns: 棋盘列数
+        rows: 棋盘行数
     
     返回:
-        一个 BOARD_COLUMNS x BOARD_ROWS 的二维列表，每个元素都是 default 值
+        一个 columns x rows 的二维列表，每个元素都是 default 值
     
     示例:
-        >>> create_revealed_state(False)
-        [[False, False, ...], [False, False, ...], ...]
+        >>> create_revealed_state(False, 4, 4)
+        [[False, False, False, False], [False, False, False, False], ...]
     """
-    return [[default] * BOARD_ROWS for _ in range(BOARD_COLUMNS)]
+    return [[default] * rows for _ in range(columns)]
 
 
 # ============================================
 # 棋盘创建函数
 # ============================================
 
-def create_board(mode: str = MODE_COLOR, difficulty: str = "easy") -> Board:
+def create_board(
+    mode: str = MODE_COLOR,
+    chinese_difficulty: str = DEFAULT_CHINESE_DIFFICULTY,
+    columns: int = DEFAULT_BOARD_COLUMNS,
+    rows: int = DEFAULT_BOARD_ROWS,
+) -> Board:
     """
     创建一个随机化的游戏棋盘。
     
-    根据选择的游戏模式创建不同类型的棋盘：
-    - 颜色模式：使用形状（a-e）和颜色组合
+    根据选择的游戏模式和棋盘大小创建不同类型的棋盘：
+    - 颜色模式：使用形状和颜色组合
     - 汉字模式：使用汉字和颜色组合
     
     参数:
         mode: 游戏模式，可选值为 MODE_COLOR 或 MODE_CHINESE
-        difficulty: 汉字模式的难度级别，可选值为 "easy"、"medium"、"hard"
+        chinese_difficulty: 汉字模式的难度级别，可选值为 "easy"、"medium"、"hard"
+        columns: 棋盘列数
+        rows: 棋盘行数
     
     返回:
-        一个 BOARD_COLUMNS x BOARD_ROWS 的二维棋盘列表，每个元素是一个图标元组
+        一个 columns x rows 的二维棋盘列表，每个元素是一个图标元组
     
     示例:
-        # 颜色模式
-        >>> board = create_board(MODE_COLOR)
+        # 颜色模式，4x4 棋盘
+        >>> board = create_board(MODE_COLOR, columns=4, rows=4)
         >>> board[0][0]
         ('a', (255, 0, 0))
         
-        # 汉字模式
-        >>> board = create_board(MODE_CHINESE, "easy")
+        # 汉字模式，6x6 棋盘
+        >>> board = create_board(MODE_CHINESE, "easy", columns=6, rows=6)
         >>> board[0][0]
         ('一', (255, 0, 0))
     """
     if mode == MODE_CHINESE:
-        return _create_chinese_board(difficulty)
+        return _create_chinese_board(chinese_difficulty, columns, rows)
     else:
-        return _create_color_board()
+        return _create_color_board(columns, rows)
 
 
-def _create_color_board() -> Board:
+def _create_color_board(
+    columns: int = DEFAULT_BOARD_COLUMNS,
+    rows: int = DEFAULT_BOARD_ROWS,
+) -> Board:
     """
     创建颜色模式的棋盘（内部函数）。
     
-    颜色模式使用形状（a-e）和颜色的组合作为图标。
+    颜色模式使用形状和颜色的组合作为图标。
     每种组合会出现两次，确保可以配对。
+    
+    参数:
+        columns: 棋盘列数
+        rows: 棋盘行数
     
     返回:
         随机化的颜色模式棋盘
@@ -124,8 +146,12 @@ def _create_color_board() -> Board:
     random.shuffle(icons)
     
     # 计算需要的图标对数
-    # 棋盘总格子数必须是偶数，这里 (10列 × 7行) = 70 个格子，需要 35 对
-    total_pairs = (BOARD_COLUMNS * BOARD_ROWS) // 2
+    # 棋盘总格子数必须是偶数
+    total_pairs = (columns * rows) // 2
+    
+    # 如果图标数量不够，重复使用图标
+    while len(icons) < total_pairs:
+        icons.extend(icons)
     
     # 选择需要的图标对，每种复制一份（确保每个图标出现两次）
     picked = icons[:total_pairs] * 2
@@ -135,16 +161,20 @@ def _create_color_board() -> Board:
     
     # 填充到二维棋盘列表
     board: Board = []
-    for x in range(BOARD_COLUMNS):
+    for x in range(columns):
         column: List[Icon] = []
-        for _ in range(BOARD_ROWS):
+        for _ in range(rows):
             column.append(picked.pop(0))
         board.append(column)
     
     return board
 
 
-def _create_chinese_board(difficulty: str = "easy") -> Board:
+def _create_chinese_board(
+    difficulty: str = DEFAULT_CHINESE_DIFFICULTY,
+    columns: int = DEFAULT_BOARD_COLUMNS,
+    rows: int = DEFAULT_BOARD_ROWS,
+) -> Board:
     """
     创建汉字模式的棋盘（内部函数）。
     
@@ -153,6 +183,8 @@ def _create_chinese_board(difficulty: str = "easy") -> Board:
     
     参数:
         difficulty: 难度级别，可选值为 "easy"、"medium"、"hard"
+        columns: 棋盘列数
+        rows: 棋盘行数
     
     返回:
         随机化的汉字模式棋盘
@@ -177,7 +209,7 @@ def _create_chinese_board(difficulty: str = "easy") -> Board:
         icons.append((char, color))
     
     # 计算需要的图标对数
-    total_pairs = (BOARD_COLUMNS * BOARD_ROWS) // 2
+    total_pairs = (columns * rows) // 2
     
     # 如果汉字数量不够，重复使用汉字
     while len(icons) < total_pairs:
@@ -190,9 +222,9 @@ def _create_chinese_board(difficulty: str = "easy") -> Board:
     
     # 填充到二维棋盘列表
     board: Board = []
-    for x in range(BOARD_COLUMNS):
+    for x in range(columns):
         column: List[Icon] = []
-        for _ in range(BOARD_ROWS):
+        for _ in range(rows):
             column.append(picked.pop(0))
         board.append(column)
     
@@ -253,7 +285,12 @@ def split_every(size: int, items: List[Tuple[int, int]]) -> List[List[Tuple[int,
 # ============================================
 
 def get_box_at_pixel(
-    x: int, y: int, left_top_getter: Callable[[int, int], Tuple[int, int]]
+    x: int,
+    y: int,
+    left_top_getter: Callable[[int, int], Tuple[int, int]],
+    columns: int = DEFAULT_BOARD_COLUMNS,
+    rows: int = DEFAULT_BOARD_ROWS,
+    box_size: int = 40,
 ) -> Tuple[Optional[int], Optional[int]]:
     """
     根据像素坐标获取对应的棋盘格子坐标。
@@ -265,6 +302,9 @@ def get_box_at_pixel(
         y: 像素坐标的 y 值
         left_top_getter: 一个函数，用于根据格子坐标获取其左上角的像素坐标
                         通常传入 render.py 中的 left_top_of_box 函数
+        columns: 棋盘列数
+        rows: 棋盘行数
+        box_size: 每个格子的尺寸
     
     返回:
         如果像素坐标在某个格子内，返回 (box_x, box_y)
@@ -278,12 +318,12 @@ def get_box_at_pixel(
     import pygame
     
     # 遍历所有格子，检查像素坐标是否在格子范围内
-    for box_x in range(BOARD_COLUMNS):
-        for box_y in range(BOARD_ROWS):
+    for box_x in range(columns):
+        for box_y in range(rows):
             # 获取格子左上角的像素坐标
             left, top = left_top_getter(box_x, box_y)
             # 创建矩形对象用于碰撞检测
-            rect = pygame.Rect(left, top, BOX_SIZE, BOX_SIZE)
+            rect = pygame.Rect(left, top, box_size, box_size)
             # 检查像素坐标是否在矩形内
             if rect.collidepoint(x, y):
                 return box_x, box_y
@@ -319,3 +359,54 @@ def has_won(revealed: Revealed) -> bool:
     # 外层 all() 检查每一列
     # 内层 all() 检查每一行
     return all(all(column) for column in revealed)
+
+
+# ============================================
+# 棋盘参数获取函数
+# ============================================
+
+def calculate_board_margins(
+    window_width: int,
+    window_height: int,
+    columns: int,
+    rows: int,
+    box_size: int,
+    gap_size: int = GAP_SIZE,
+    timer_height: int = 50,
+) -> Tuple[int, int]:
+    """
+    计算棋盘的边距，使棋盘在窗口中居中显示。
+    
+    考虑到顶部需要显示计时器，棋盘应该在剩余空间中垂直居中。
+    
+    参数:
+        window_width: 窗口宽度
+        window_height: 窗口高度
+        columns: 棋盘列数
+        rows: 棋盘行数
+        box_size: 格子尺寸
+        gap_size: 格子间距
+        timer_height: 计时器区域的高度（保留给顶部的计时器）
+    
+    返回:
+        (x_margin, y_margin) 元组，表示棋盘的左侧和顶部边距
+    
+    计算逻辑:
+        棋盘总宽度 = columns * box_size + (columns - 1) * gap_size
+        棋盘总高度 = rows * box_size + (rows - 1) * gap_size
+        左侧边距 = (窗口宽度 - 棋盘总宽度) / 2
+        顶部边距 = 计时器高度 + (剩余高度 - 棋盘总高度) / 2
+    """
+    # 计算棋盘的总宽度和总高度
+    board_total_width = columns * box_size + (columns - 1) * gap_size
+    board_total_height = rows * box_size + (rows - 1) * gap_size
+    
+    # 计算水平边距（使棋盘水平居中）
+    x_margin = (window_width - board_total_width) // 2
+    
+    # 计算垂直边距
+    # 考虑到计时器区域，棋盘应该在剩余空间中垂直居中
+    available_height = window_height - timer_height
+    y_margin = timer_height + (available_height - board_total_height) // 2
+    
+    return x_margin, y_margin
