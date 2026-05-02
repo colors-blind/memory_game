@@ -93,6 +93,75 @@ LeftTopCalculator = Callable[[int, int], Tuple[int, int]]
 
 
 # ============================================
+# 超时消息显示函数
+# ============================================
+
+def show_timeout_message(
+    surface: pygame.Surface,
+    clock: pygame.time.Clock,
+):
+    """
+    显示超时消息并等待用户按任意键继续。
+    
+    参数:
+        surface: Pygame 绘制表面
+        clock: Pygame 时钟对象
+    """
+    from render import get_timer_font, initialize_font
+    
+    # 确保字体已初始化
+    initialize_font()
+    font = get_timer_font()
+    
+    # 消息文本
+    message1 = "时间到了！"
+    message2 = "按下任意键继续"
+    
+    # 消息颜色
+    text_color = (255, 0, 0)  # 红色
+    
+    # 等待按键循环
+    waiting = True
+    while waiting:
+        # 填充背景
+        surface.fill(BACKGROUND_COLOR)
+        
+        # 计算中心位置
+        center_x = WINDOW_WIDTH // 2
+        
+        # 渲染第一行文本
+        text_surface1 = font.render(message1, True, text_color)
+        text_rect1 = text_surface1.get_rect(centerx=center_x, centery=WINDOW_HEIGHT // 2 - 40)
+        surface.blit(text_surface1, text_rect1)
+        
+        # 渲染第二行文本
+        text_surface2 = font.render(message2, True, text_color)
+        text_rect2 = text_surface2.get_rect(centerx=center_x, centery=WINDOW_HEIGHT // 2 + 40)
+        surface.blit(text_surface2, text_rect2)
+        
+        # 更新显示
+        pygame.display.update()
+        
+        # 事件处理
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                raise SystemExit
+            elif event.type == KEYUP:
+                if event.key == K_ESCAPE:
+                    pygame.quit()
+                    raise SystemExit
+                # 任意其他键退出等待
+                waiting = False
+            elif event.type == MOUSEBUTTONUP:
+                # 鼠标点击也可以继续
+                waiting = False
+        
+        # 控制帧率
+        clock.tick(FPS)
+
+
+# ============================================
 # 菜单循环函数
 # ============================================
 
@@ -252,6 +321,7 @@ def run_game_loop(
     rows = size_config["rows"]            # 行数
     box_size = size_config["box_size"]    # 格子尺寸
     size_name = size_config["name"]       # 显示名称
+    time_limit = size_config["time_limit"]  # 时间限制（秒）
     
     # 计算棋盘边距（使棋盘在窗口中居中，考虑顶部计时器区域）
     x_margin, y_margin = calculate_board_margins(
@@ -338,15 +408,25 @@ def run_game_loop(
         surface.fill(BACKGROUND_COLOR)
         
         # ============================================
-        # 计算并显示已用时间
+        # 计算并显示剩余时间
         # ============================================
         
-        # 计算已用时间（秒）
+        # 计算已用时间和剩余时间（秒）
         current_time = pygame.time.get_ticks()
         elapsed_seconds = (current_time - start_time) / 1000.0
+        remaining_seconds = max(0, time_limit - elapsed_seconds)
         
         # 绘制游戏信息栏（计时器、棋盘大小、模式）
-        draw_game_info(surface, elapsed_seconds, size_name, mode_name)
+        draw_game_info(surface, elapsed_seconds, remaining_seconds, time_limit, size_name, mode_name)
+        
+        # ============================================
+        # 检查是否超时
+        # ============================================
+        
+        if remaining_seconds <= 0:
+            # 时间到了，显示超时消息并等待按键
+            show_timeout_message(surface, clock)
+            return
         
         # ============================================
         # 绘制当前棋盘状态

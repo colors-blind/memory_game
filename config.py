@@ -52,6 +52,7 @@ BOARD_SIZE_LEVELS = {
         "box_size": 50,         # 格子尺寸（稍微大一点，便于点击）
         "name": "简单 (4×4)",   # 显示名称
         "total_boxes": 16,      # 总格子数
+        "time_limit": 120,      # 时间限制（秒）
     },
     # 中等难度：6x6 = 36格（18对）
     # 适合有一定经验的玩家
@@ -61,6 +62,7 @@ BOARD_SIZE_LEVELS = {
         "box_size": 45,
         "name": "中等 (6×6)",
         "total_boxes": 36,
+        "time_limit": 300,      # 时间限制（秒）
     },
     # 困难难度：8x6 = 48格（24对）
     # 适合熟练玩家
@@ -70,6 +72,7 @@ BOARD_SIZE_LEVELS = {
         "box_size": 40,
         "name": "困难 (8×6)",
         "total_boxes": 48,
+        "time_limit": 1200,     # 时间限制（秒）
     },
     # 专家难度：10x7 = 70格（35对）
     # 原来的默认配置，适合高手挑战
@@ -79,6 +82,7 @@ BOARD_SIZE_LEVELS = {
         "box_size": 35,
         "name": "专家 (10×7)",
         "total_boxes": 70,
+        "time_limit": 1800,     # 时间限制（秒）- 30分钟
     },
 }
 

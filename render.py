@@ -658,29 +658,43 @@ def draw_timer(
 def draw_game_info(
     surface: pygame.Surface,
     elapsed_seconds: float,
+    remaining_seconds: float,
+    time_limit: float,
     board_size_name: str,
     mode_name: str,
 ):
     """
     绘制游戏信息栏。
     
-    显示计时器、棋盘大小、游戏模式等信息。
+    显示计时器（剩余时间）、棋盘大小、游戏模式等信息。
+    当剩余时间不足时，时间显示为红色警告。
     
     参数:
         surface: Pygame 绘制表面
         elapsed_seconds: 已用时间（秒）
+        remaining_seconds: 剩余时间（秒）
+        time_limit: 时间限制（秒）
         board_size_name: 棋盘大小名称（如 "中等 (6×6)"）
         mode_name: 游戏模式名称（如 "颜色模式" 或 "汉字模式"）
     """
     # 获取字体
     font = get_timer_font()
     
-    # 格式化时间
-    time_str = format_time(elapsed_seconds)
+    # 格式化剩余时间
+    time_str = format_time(remaining_seconds)
     
-    # 绘制时间
-    time_text = f"时间: {time_str}"
-    time_surface = font.render(time_text, True, TIMER_COLOR)
+    # 判断剩余时间是否紧急（少于1/5时间或少于30秒）
+    urgent_threshold = min(time_limit / 5, 30)
+    if remaining_seconds <= urgent_threshold:
+        # 紧急状态：显示红色
+        time_color = (255, 0, 0)  # 红色
+    else:
+        # 正常状态：显示白色
+        time_color = TIMER_COLOR
+    
+    # 绘制剩余时间
+    time_text = f"剩余: {time_str}"
+    time_surface = font.render(time_text, True, time_color)
     surface.blit(time_surface, (TIMER_POSITION_X, TIMER_POSITION_Y))
     
     # 绘制棋盘大小（在右侧）
