@@ -51,6 +51,13 @@ _font: Optional[pygame.font.Font] = None
 # 计时器字体对象
 _timer_font: Optional[pygame.font.Font] = None
 
+# 保存成功加载的中文字体文件路径
+# 用于在不同字体大小之间复用
+_loaded_font_path: Optional[str] = None
+
+# 保存成功加载的中文字体名称（用于 SysFont）
+_loaded_font_name: Optional[str] = None
+
 
 # ============================================
 # 字体初始化函数
@@ -72,7 +79,7 @@ def initialize_font() -> pygame.font.Font:
     注意:
         此函数应该在 pygame.init() 之后调用
     """
-    global _font
+    global _font, _loaded_font_path, _loaded_font_name
     
     # 如果已经初始化过，直接返回
     if _font is not None:
@@ -171,6 +178,9 @@ def initialize_font() -> pygame.font.Font:
                 
                 if metrics and all(m is not None for m in metrics):
                     print(f"成功加载字体: {font_name} (路径: {font_path})")
+                    # 保存字体路径，供后续使用（如计时器字体）
+                    _loaded_font_path = font_path
+                    _loaded_font_name = None
                     return _font
                     
         except Exception:
@@ -186,6 +196,9 @@ def initialize_font() -> pygame.font.Font:
             
             if metrics and all(m is not None for m in metrics):
                 print(f"成功加载字体: {font_name}")
+                # 保存字体名称，供后续使用
+                _loaded_font_path = None
+                _loaded_font_name = font_name
                 return _font
                 
         except Exception:
@@ -212,6 +225,9 @@ def initialize_font() -> pygame.font.Font:
             
             if metrics and all(m is not None for m in metrics):
                 print(f"成功加载字体文件: {font_path}")
+                # 保存字体路径，供后续使用
+                _loaded_font_path = font_path
+                _loaded_font_name = None
                 return _font
                 
         except Exception:
@@ -245,24 +261,42 @@ def get_timer_font() -> pygame.font.Font:
     """
     获取计时器专用的字体对象。
     
+    此函数会尝试使用与 initialize_font() 相同的中文字体，
+    只是字体大小不同（TIMER_FONT_SIZE）。
+    
     返回:
         用于计时器显示的字体对象
     """
-    global _timer_font
+    global _timer_font, _loaded_font_path, _loaded_font_name
     
     if _timer_font is not None:
         return _timer_font
     
-    # 初始化字体
+    # 初始化字体（确保已查找过中文字体）
     initialize_font()
     
-    # 尝试使用支持中文的字体
-    try:
-        # 使用系统字体
-        _timer_font = pygame.font.Font(None, TIMER_FONT_SIZE)
-    except Exception:
-        _timer_font = pygame.font.Font(None, TIMER_FONT_SIZE)
+    # 优先使用已成功加载的中文字体
+    # 方法1: 使用保存的字体文件路径
+    if _loaded_font_path is not None:
+        try:
+            _timer_font = pygame.font.Font(_loaded_font_path, TIMER_FONT_SIZE)
+            print(f"计时器字体: 使用已加载的中文字体 (路径: {_loaded_font_path})")
+            return _timer_font
+        except Exception as e:
+            print(f"无法使用字体路径创建计时器字体: {e}")
     
+    # 方法2: 使用保存的字体名称（SysFont）
+    if _loaded_font_name is not None:
+        try:
+            _timer_font = pygame.font.SysFont(_loaded_font_name, TIMER_FONT_SIZE, bold=False, italic=False)
+            print(f"计时器字体: 使用已加载的中文字体 (名称: {_loaded_font_name})")
+            return _timer_font
+        except Exception as e:
+            print(f"无法使用字体名称创建计时器字体: {e}")
+    
+    # 备选方案: 使用默认字体
+    print("警告: 计时器字体使用默认字体（可能不支持中文）")
+    _timer_font = pygame.font.Font(None, TIMER_FONT_SIZE)
     return _timer_font
 
 
